@@ -19,6 +19,11 @@ from functools import wraps
 from datetime import datetime
 import werkzeug.utils
 # from flask_wtf import CSRFProtect
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import csv
 
 # 1. SETUP DE DIRECTORIOS IMPORTANTES Y GLOBALES ==========================
 DIRS = ['uploads', 'reports', 'patients', 'logs']
@@ -333,18 +338,29 @@ def process_clinical_frame(frame, pose, biomech, processor, state, voice):
 
     if results.pose_landmarks:
         lms = results.pose_landmarks.landmark
-        key_points = [23, 24, 25, 26, 27, 28, 31, 32]
-        vis = [lms[i].visibility for i in key_points]
-        avg_vis = sum(vis) / len(vis)
         
-        if avg_vis < 0.5:
-            cv2.putText(image, "VISIBILIDAD BAJA - ACERQUESE", (50, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-        else:
-            mp.solutions.drawing_utils.draw_landmarks(image, results.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS,
-                                      mp.solutions.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1, circle_radius=1),
-                                      mp.solutions.drawing_utils.DrawingSpec(color=(255, 50, 50), thickness=2, circle_radius=1))
+        # === NUEVO: Validación estricta de landmarks inferiores ===
+        # Índices críticos para podiatría: caderas(23,24), rodillas(25,26), tobillos(27,28), pies(29,30,31,32)
+        critical_indices = [23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        critical_vis = [lms[i].visibility for i in critical_indices]
+        min_critical_vis = min(critical_vis)
+        
+        # Si cualquier landmark crítico tiene visibilidad < 0.6, bloqueamos métricas
+        if min_critical_vis < 0.6:
+            app_log.warning(f"Visibilidad insuficiente ({min_critical_vis:.2f}). Encuadre incorrecto.")
+            cv2.putText(image, "🚫 ENCUADRE INCORRECTO - Muestre pies/tobillos", (50, 400), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+            # Devolvemos estado vacío para no contaminar buffers
+            return image, {}, None, None
 
-            def get_cp(lm): return [lm.x, lm.y]
+        # Dibujamos landmarks si la visibilidad es OK
+        mp.solutions.drawing_utils.draw_landmarks(image, results.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS,
+                                  mp.solutions.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1, circle_radius=1),
+                                  mp.solutions.drawing_utils.DrawingSpec(color=(255, 50, 50), thickness=2, circle_radius=1))
+
+        def get_cp(lm): return [lm.x, lm.y]
+        
+        try:
             r_an = get_cp(lms[mp.solutions.pose.PoseLandmark.RIGHT_ANKLE.value])
             r_ft = get_cp(lms[mp.solutions.pose.PoseLandmark.RIGHT_FOOT_INDEX.value])
             r_he = get_cp(lms[mp.solutions.pose.PoseLandmark.RIGHT_HEEL.value])
@@ -376,6 +392,7 @@ def process_clinical_frame(frame, pose, biomech, processor, state, voice):
             }
             feature_vector = [r_ankle_ang, l_ankle_ang, r_knee_ang, l_knee_ang, r_hip_ang, l_hip_ang, r_fpa, l_fpa, r_arch, l_arch, symmetry]
 
+            # Auditoría Clínica UI
             c_rng = state.clinical_ranges
             def evt(val, r_key): return c_rng[r_key]['min'] <= val <= c_rng[r_key]['max']
             t_d_ok = evt(r_ankle_ang, 'ankle_dorsiflexion')
@@ -401,6 +418,10 @@ def process_clinical_frame(frame, pose, biomech, processor, state, voice):
                 yp = 55 + len(metrics_display)*25
                 cv2.rectangle(image, (15, yp-5), (320, yp+20), (0, 200, 255), -1)
                 cv2.putText(image, f"! {pron_text} !", (20, yp+12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        except Exception as e:
+            app_log.warning(f"Error calculando ángulos: {e}")
+            current_angles = {}
+            feature_vector = None
     return image, current_angles, feature_vector, pron_text
 
 def generate_clinical_frames(source):
@@ -438,7 +459,7 @@ def generate_clinical_frames(source):
                 if angles:
                     with state.lock:
                         state.current_live_angles = angles
-                        if state.session_active and features:
+                        if state.session_active and features is not None:
                             state.session_data.append(features + [state.current_patient_id])
                 
                 system_status = f"FPS: {state.current_fps:.1f} | Pac: {state.current_patient_id or 'Huesped'}"
@@ -452,6 +473,148 @@ def generate_clinical_frames(source):
         app_log.error(f"Generador Exception: {e}")
     finally:
         if cap: cap.release()
+
+# ======================================================================
+# 10. REPORT GENERATOR (FASE 1) ========================================
+# ======================================================================
+
+# ======================================================================
+# 10. PDF REPORT GENERATOR =============================================
+# ======================================================================
+
+def generate_clinical_report_pdf(patient_data, session_metrics, output_path):
+    """
+    Genera reporte clínico en PDF con métricas de la sesión
+    patient_data: dict con info del paciente
+    session_metrics: lista de listas con métricas [ra, la, rk, lk, rh, lh, rfpa, lfpa, rarch, larch, sym]
+    """
+    doc = SimpleDocTemplate(output_path, pagesize=A4,
+                          rightMargin=40, leftMargin=40,
+                          topMargin=40, bottomMargin=40)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Título principal
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'],
+                                fontSize=18, spaceAfter=20, alignment=1, textColor=colors.darkblue)
+    elements.append(Paragraph("🦶 Reporte de Análisis de Marcha", title_style))
+    elements.append(Spacer(1, 10))
+    
+    # Subtítulo
+    elements.append(Paragraph("PodiaAI Clinic v5.0 - Sistema de Evaluación Biomecánica", 
+                             ParagraphStyle('Subtitle', parent=styles['Normal'], 
+                                          fontSize=10, alignment=1, textColor=colors.grey)))
+    elements.append(Spacer(1, 20))
+    
+    # Datos del paciente
+    elements.append(Paragraph("📋 Datos del Paciente", styles['Heading2']))
+    patient_info = [
+        ['ID Paciente:', patient_data.get('id', 'N/A')],
+        ['Nombre:', patient_data.get('name', 'N/A')],
+        ['Edad:', str(patient_data.get('age', 'N/A'))],
+        ['Sexo:', patient_data.get('sex', 'N/A')],
+        ['Tipo de Pie:', patient_data.get('foot_type', 'N/A')],
+        ['Fecha de Evaluación:', datetime.now().strftime('%d/%m/%Y %H:%M:%S')]
+    ]
+    patient_table = Table(patient_info, colWidths=[120, 350])
+    patient_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (0,-1), colors.lightgrey),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('PADDING', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    elements.append(patient_table)
+    elements.append(Spacer(1, 25))
+    
+    # Análisis de métricas
+    elements.append(Paragraph("📊 Métricas Biomecánicas Promedio", styles['Heading2']))
+    
+    if session_metrics and len(session_metrics) > 0:
+        # Convertir a DataFrame para análisis estadístico
+        # Columnas: RA, LA, RK, LK, RH, LH, RFPA, LFPA, RArch, LArch, Sym
+        df = pd.DataFrame(session_metrics, 
+                         columns=['RA', 'LA', 'RK', 'LK', 'RH', 'LH', 'RFPA', 'LFPA', 'RArch', 'LArch', 'Sym'])
+        
+        # Calcular estadísticas
+        summary = {
+            'Tobillo Derecho (°)': f"{df['RA'].mean():.1f} ± {df['RA'].std():.1f}",
+            'Tobillo Izquierdo (°)': f"{df['LA'].mean():.1f} ± {df['LA'].std():.1f}",
+            'Rodilla Derecho (°)': f"{df['RK'].mean():.1f} ± {df['RK'].std():.1f}",
+            'Rodilla Izquierdo (°)': f"{df['LK'].mean():.1f} ± {df['LK'].std():.1f}",
+            'Cadera Derecho (°)': f"{df['RH'].mean():.1f} ± {df['RH'].std():.1f}",
+            'Cadera Izquierdo (°)': f"{df['LH'].mean():.1f} ± {df['LH'].std():.1f}",
+            'FPA Derecho (°)': f"{df['RFPA'].mean():.1f} ± {df['RFPA'].std():.1f}",
+            'FPA Izquierdo (°)': f"{df['LFPA'].mean():.1f} ± {df['LFPA'].std():.1f}",
+            'Altura Arco Derecho': f"{df['RArch'].mean():.1f} ± {df['RArch'].std():.1f}",
+            'Altura Arco Izquierdo': f"{df['LArch'].mean():.1f} ± {df['LArch'].std():.1f}",
+            'Índice de Simetría (%)': f"{df['Sym'].mean():.1f} ± {df['Sym'].std():.1f}",
+        }
+        
+        # Crear tabla de métricas
+        metrics_data = [['Parámetro', 'Valor Promedio ± DE']]
+        for k, v in summary.items():
+            metrics_data.append([k, v])
+        
+        metrics_table = Table(metrics_data, colWidths=[280, 220])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+            ('PADDING', (0,0), (-1,-1), 8),
+            ('ALIGN', (1,1), (-1,-1), 'RIGHT'),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.whitesmoke, colors.white]),
+        ]))
+        elements.append(metrics_table)
+        
+        # Análisis de severidad
+        elements.append(Spacer(1, 20))
+        elements.append(Paragraph("🚦 Evaluación de Severidad", styles['Heading2']))
+        
+        avg_sym = df['Sym'].mean()
+        if avg_sym >= 90:
+            severity_color = colors.green
+            severity_text = "Leve - Marcha dentro de parámetros normales"
+        elif avg_sym >= 75:
+            severity_color = colors.orange
+            severity_text = "Moderado - Se recomiendan intervenciones"
+        else:
+            severity_color = colors.red
+            severity_text = "Grave - Requiere atención inmediata"
+        
+        severity_style = ParagraphStyle('Severity', parent=styles['Normal'], 
+                                       fontSize=12, textColor=severity_color, spaceAfter=10)
+        elements.append(Paragraph(f"Nivel: <b>{severity_text}</b>", severity_style))
+        elements.append(Paragraph(f"Índice de Simetría Global: <b>{avg_sym:.1f}%</b>", 
+                                 ParagraphStyle('Symmetry', parent=styles['Normal'], fontSize=11)))
+        
+        # Número de muestras
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph(f"Total de muestras analizadas: <b>{len(df)}</b>", 
+                                 styles['Normal']))
+        
+    else:
+        elements.append(Paragraph("<i>No hay datos de sesión disponibles para este paciente.</i>", 
+                                 styles['Normal']))
+    
+    # Footer clínico
+    elements.append(Spacer(1, 40))
+    disclaimer = Paragraph(
+        "<b>Nota Clínica:</b> Este reporte es una herramienta de apoyo a la decisión clínica. "
+        "Los valores deben interpretarse en contexto con la evaluación física completa del paciente. "
+        "Rangos de referencia basados en literatura biomecánica estándar (Perry & Burnfield, Gait Analysis, 2nd ed.). "
+        "<br/><br/><i>PodiaAI Clinic v5.0 - Sistema de Análisis de Marcha Asistido por IA</i>",
+        ParagraphStyle('Disclaimer', fontSize=8, textColor=colors.grey, spaceBefore=10)
+    )
+    elements.append(disclaimer)
+    
+    # Generar PDF
+    try:
+        doc.build(elements)
+        return True
+    except Exception as e:
+        app_log.error(f"Error generando PDF: {e}")
+        return False
+
 
 # ======================================================================
 # RUTAS REST API ASISTIA V5
@@ -614,6 +777,68 @@ def train_model():
     except Exception as e:
         app_log.error(f"Training error: {e}")
         return jsonify({'error': str(e)}), 500
+
+# ======================================================================
+# RUTAS ADICIONALES PARA REPORTES PDF
+# ======================================================================
+
+@app.route('/api/report/generate/<pid>', methods=['POST'])
+@requires_auth
+def generate_report(pid):
+    """Genera reporte PDF para un paciente con datos de sesión"""
+    app_log.info(f"Solicitando generar reporte para paciente: {pid}")
+    
+    # Obtener datos del paciente
+    patient = PatientManager.get_patient(pid)
+    if not patient:
+        app_log.error(f"Paciente {pid} no encontrado")
+        return jsonify({'error': 'Paciente no encontrado'}), 404
+    
+    # Obtener métricas de sesión del paciente
+    with state.lock:
+        # Filtrar métricas del paciente específico
+        session_data = list(state.session_data)
+        patient_metrics = [d[:11] for d in session_data if len(d) > 11 and d[11] == pid]
+        
+        # Fallback: si no hay datos específicos del paciente, usar todos
+        if not patient_metrics:
+            app_log.warning(f"No hay datos específicos para paciente {pid}, usando todos los datos de sesión")
+            patient_metrics = [d[:11] for d in session_data]
+    
+    app_log.info(f"Generando PDF con {len(patient_metrics)} muestras")
+    
+    # Generar nombre de archivo único
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"reporte_{pid}_{timestamp}.pdf"
+    output_path = os.path.join('reports', filename)
+    
+    # Generar PDF
+    try:
+        success = generate_clinical_report_pdf(patient, patient_metrics, output_path)
+        if success:
+            app_log.info(f"Reporte generado exitosamente: {output_path}")
+            return jsonify({
+                'status': 'ok', 
+                'report_url': f'/api/report/download/{filename}',
+                'filename': filename,
+                'samples': len(patient_metrics)
+            })
+        else:
+            return jsonify({'error': 'Error al generar el PDF'}), 500
+    except Exception as e:
+        app_log.error(f"Error generando reporte: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/report/download/<filename>', methods=['GET'])
+@requires_auth
+def download_report(filename):
+    """Descarga reporte PDF generado"""
+    filepath = os.path.join('reports', filename)
+    if os.path.exists(filepath):
+        app_log.info(f"Descargando reporte: {filepath}")
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    app_log.error(f"Archivo no encontrado: {filepath}")
+    return jsonify({'error': 'Archivo no encontrado'}), 404
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5001, threaded=True, debug=False)

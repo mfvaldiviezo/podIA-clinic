@@ -329,7 +329,7 @@
         <div class="logo">🦶 PodiaAI <span class="text-primary">Clinic</span> <span class="version">v5.0 Prof</span>
         </div>
         <div class="patient-selector">
-            <select id="patientSelect" onchange="loadActivePatient()">
+            <select id="patient-select" onchange="setActivePatient(this.value)">
                 <option value="">🔍 Seleccionar paciente...</option>
             </select>
             <button class="btn btn-primary" onclick="switchToTab('patient', null)">+ Nuevo</button>
@@ -401,6 +401,9 @@
                             onclick="trainIA()">Re-Entrenar IA</button>
                         <button class="btn btn-outline" style="width:100%; margin-top:0.5rem"
                             onclick="exportCSV()">Exportar Session (.csv)</button>
+                        <div class="action-btn" onclick="generateReport()">
+                            📄 Generar Reporte PDF
+                        </div>
                     </div>
                 </div>
             </div>
@@ -435,7 +438,8 @@
             <div class="card">
                 <h3>🤖 Motor de Inteligencia Artificial</h3>
                 <p style="font-size: 0.8rem; color: var(--color-muted); margin-bottom: 1rem;">Muestras recolectadas:
-                    <span id="sampleCount" style="font-weight: 700;">0</span></p>
+                    <span id="sampleCount" style="font-weight: 700;">0</span>
+                </p>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                     <button class="btn btn-outline" onclick="trainIA()">⚡ Entrenar Modelo Clínico</button>
                     <p style="font-size: 0.75rem;">El modelo se entrena localmente para detectar vicios de marcha
@@ -454,6 +458,7 @@
         const HEADERS_JSON = { 'Content-Type': 'application/json', 'Authorization': API_AUTH };
 
         const appState = { sessionActive: false, currentPatientId: null, currentPatientName: "Huésped" };
+        window.currentPatientId = null; // Estado global para robustez
         let charts = { angles: null };
 
         function switchToTab(id, el) {
@@ -467,22 +472,6 @@
         function showToast(msg) {
             const t = document.createElement('div'); t.className = 'toast'; t.innerText = msg;
             document.body.appendChild(t); setTimeout(() => t.remove(), 3000);
-        }
-
-        async function updatePatientList() {
-            try {
-                const response = await fetch('/api/patients', { headers: HEADERS_AUTH });
-                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-                const list = await response.json();
-                const sel = document.getElementById('patientSelect');
-                sel.innerHTML = '<option value="">🔍 Seleccionar paciente...</option>';
-                list.forEach(p => {
-                    sel.innerHTML += `<option value="${p.id}">${p.name} (ID: ${p.id.substring(0, 4)})</option>`;
-                });
-                if (appState.currentPatientId) sel.value = appState.currentPatientId;
-            } catch (e) {
-                console.error("Error cargando lista de pacientes:", e);
-            }
         }
 
         async function submitPatient() {
@@ -505,46 +494,23 @@
 
                 if (res.status === 'ok') {
                     showToast("¡Nuevo Paciente Registrado!");
+                    window.currentPatientId = res.patient_id;
                     appState.currentPatientId = res.patient_id;
                     appState.currentPatientName = data.name;
                     document.getElementById('activePatientDisplay').innerText = data.name;
 
-                    // Actualizamos la lista con el nuevo paciente
-                    updatePatientList();
+                    await loadPatientsList();
+                    await setActivePatient(res.patient_id);
 
-                    // Limpiamos el formulario
                     document.getElementById('p_name').value = '';
                     document.getElementById('p_age').value = '';
                     document.getElementById('p_notes').value = '';
-
-                    // Volvemos a la pestaña en vivo
                     switchToTab('live', null);
                 }
             } catch (e) {
                 console.error("Error al guardar el paciente:", e);
                 showToast("Error de conexión. Revisa la consola.");
             }
-        }
-
-        async function loadActivePatient() {
-            const id = document.getElementById('patientSelect').value;
-            if (!id) {
-                appState.currentPatientId = null;
-                appState.currentPatientName = "Huésped";
-                document.getElementById('activePatientDisplay').innerText = "Huésped";
-                return;
-            }
-            try {
-                const r = await fetch(`/api/patient/active/${id}`, { method: 'PUT', headers: HEADERS_AUTH });
-                if (!r.ok) return;
-                const p = await r.json();
-                if (p.status === 'ok') {
-                    appState.currentPatientId = id;
-                    appState.currentPatientName = p.name;
-                    document.getElementById('activePatientDisplay').innerText = p.name;
-                    showToast(`Paciente activo: ${p.name}`);
-                }
-            } catch (e) { console.error("Error cargando paciente activo", e); }
         }
 
         async function toggleSession() {
@@ -651,15 +617,11 @@
         }
 
         function exportCSV() {
-            if (!appState.currentPatientId) return showToast("⚠️ Debe seleccionar un paciente");
-            window.location.href = `/api/export_report/${appState.currentPatientId}`;
+            if (!window.currentPatientId) return showToast("⚠️ Debe seleccionar un paciente");
+            window.location.href = `/api/export_report/${window.currentPatientId}`;
         }
 
         window.onload = () => {
-            // Inicializar la lista al cargar la página
-            updatePatientList();
-
-            // Configurar la gráfica
             charts.angles = new Chart(document.getElementById('chartAngles'), {
                 type: 'line',
                 data: {
@@ -672,7 +634,6 @@
                 options: { animation: false, responsive: true, maintainAspectRatio: false, scales: { y: { min: 140, max: 190 } } }
             });
 
-            // Polling para actualizar los datos en tiempo real (cada 250ms)
             setInterval(async () => {
                 try {
                     const response = await fetch('/api/status', { headers: HEADERS_AUTH });
@@ -690,22 +651,156 @@
                         ind.className = d.active ? "active-session-indicator active" : "active-session-indicator";
                     }
 
-                    if (d.angles && d.angles.r_ankle !== undefined) {
+                    if (d.angles && Object.keys(d.angles).length > 0) {
                         document.getElementById('disp-rAnkle').innerText = d.angles.r_ankle.toFixed(1) + "°";
                         document.getElementById('disp-lAnkle').innerText = d.angles.l_ankle.toFixed(1) + "°";
                         document.getElementById('disp-sym').innerText = (d.angles.symmetry || 0).toFixed(1) + "%";
+
+                        // Restaurar estilo visual normal
+                        document.getElementById('disp-rAnkle').parentElement.style.border = '';
+                        document.getElementById('disp-lAnkle').parentElement.style.border = '';
 
                         charts.angles.data.datasets[0].data.shift();
                         charts.angles.data.datasets[0].data.push(d.angles.r_ankle);
                         charts.angles.data.datasets[1].data.shift();
                         charts.angles.data.datasets[1].data.push(d.angles.l_ankle);
                         charts.angles.update('none');
+                    } else {
+                        // Sin visibilidad / Encuadre incorrecto
+                        document.getElementById('disp-rAnkle').textContent = '--°';
+                        document.getElementById('disp-lAnkle').textContent = '--°';
+                        document.getElementById('disp-sym').textContent = '--%';
+                        
+                        // Indicador visual de alerta
+                        document.getElementById('disp-rAnkle').parentElement.style.border = '2px solid #dc3545';
+                        document.getElementById('disp-lAnkle').parentElement.style.border = '2px solid #dc3545';
                     }
-                } catch (e) {
-                    // Ignorar errores silenciosos del polling de red
-                }
+                } catch (e) { }
             }, 250);
         };
+
+        // ======================================================================
+        //  ESTADO GLOBAL & SINCRONIZACIÓN DE PACIENTE
+        // ======================================================================
+        async function syncWithBackend() {
+            try {
+                const res = await fetch('/api/status', {
+                    headers: { 'Authorization': 'Basic ' + btoa('admin:clinic2026') }
+                });
+                const data = await res.json();
+                if (data.current_patient) {
+                    window.currentPatientId = data.current_patient;
+                    const sel = document.getElementById('patient-select');
+                    if (sel) {
+                        sel.value = window.currentPatientId;
+                        updatePatientStatusDisplay();
+                    }
+                    console.log('✅ Paciente sincronizado desde backend:', window.currentPatientId);
+                }
+            } catch (e) { 
+                console.warn('⚠️ No se pudo sincronizar con backend:', e); 
+            }
+        }
+
+        async function setActivePatient(pid) {
+            if (!pid) { 
+                window.currentPatientId = null; 
+                document.getElementById('activePatientDisplay').textContent = 'Huésped';
+                return; 
+            }
+            try {
+                const res = await fetch(`/api/patient/active/${pid}`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': 'Basic ' + btoa('admin:clinic2026'), 'Content-Type': 'application/json' }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    window.currentPatientId = pid;
+                    updatePatientStatusDisplay();
+                    logAudit(`Paciente activo: ${data.name}`);
+                }
+            } catch (e) { console.error('❌ Error activando paciente:', e); }
+        }
+
+        function updatePatientStatusDisplay() {
+            const select = document.getElementById('patient-select');
+            const statusEl = document.getElementById('activePatientDisplay');
+            if (select && statusEl) {
+                const selectedOption = select.options[select.selectedIndex];
+                if (selectedOption && selectedOption.value) {
+                    statusEl.textContent = selectedOption.text.split(' (')[0];
+                } else {
+                    statusEl.textContent = 'Huésped';
+                }
+            }
+        }
+
+        async function generateReport() {
+            console.log('🔍 Iniciando generación de reporte PDF...');
+            let patientId = window.currentPatientId;
+            if (!patientId) {
+                const selectEl = document.querySelector('#patient-select');
+                if (selectEl && selectEl.value) patientId = selectEl.value;
+            }
+            if (!patientId) {
+                try {
+                    const statusResp = await fetch('/api/status', { headers: { 'Authorization': 'Basic ' + btoa('admin:clinic2026') } });
+                    const statusData = await statusResp.json();
+                    patientId = statusData.current_patient;
+                } catch (e) { }
+            }
+            if (!patientId || patientId === 'null' || patientId === '') {
+                alert('⚠️ No hay paciente activo.');
+                return;
+            }
+            const btn = document.querySelector('[onclick*="generateReport"]');
+            const originalText = btn?.innerHTML || '📄 Generar Reporte PDF';
+            if (btn) { btn.innerHTML = '⏳ Generando PDF...'; btn.disabled = true; }
+            try {
+                const response = await fetch(`/api/report/generate/${patientId}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Basic ' + btoa('admin:clinic2026'), 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+                if (data.status === 'ok' && data.filename) {
+                    window.location.href = `/api/report/download/${data.filename}`;
+                    alert(`✅ Reporte generado: ${data.filename}`);
+                } else {
+                    alert('❌ Error: ' + (data.error || 'Error desconocido'));
+                }
+            } catch (err) { alert('❌ Error de conexión'); }
+            finally { if (btn) { btn.innerHTML = originalText; btn.disabled = false; } }
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            syncWithBackend();
+            loadPatientsList();
+        });
+
+        async function loadPatientsList() {
+            try {
+                const response = await fetch('/api/patients', { headers: { 'Authorization': 'Basic ' + btoa('admin:clinic2026') } });
+                const patients = await response.json();
+                const select = document.getElementById('patient-select');
+                if (select) {
+                    select.innerHTML = '<option value="">🔍 Seleccionar paciente...</option>';
+                    patients.forEach(p => {
+                        const option = document.createElement('option');
+                        option.value = p.id;
+                        option.textContent = `${p.name} (ID: ${p.id})`;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (e) { console.error('❌ Error cargando lista:', e); }
+        }
+
+        function logAudit(msg) {
+            const logEl = document.getElementById('eventLog');
+            if (logEl) {
+                const time = new Date().toLocaleTimeString();
+                logEl.innerHTML = `[${time}] ${msg}<br>` + logEl.innerHTML;
+            }
+        }
     </script>
 </body>
 
