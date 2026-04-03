@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PodiaAI Clinic 🧪 v3.1</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --color-primary: #1e40af;
+            --color-primary-light: #3b82f6;
+            --color-success: #16a34a;
+            --color-warning: #f59e0b;
+            --color-error: #dc2626;
+            --color-bg: #f1f5f9;
+            --color-card: #ffffff;
+            --color-text: #1e293b;
+            --color-muted: #64748b;
+            --radius: 12px;
+            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            --font-main: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.5;
+            overflow-x: hidden;
+        }
+
+        .clinic-header {
+            background: var(--color-card);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e2e8f0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--color-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .version {
+            font-size: 0.7rem;
+            background: #dbeafe;
+            color: #1e40af;
+            padding: 2px 6px;
+            border-radius: 4px;
+            vertical-align: middle;
+        }
+
+        .patient-selector {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .active-session-indicator {
+            background: #fef2f2;
+            color: #991b1b;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            display: none;
+            align-items: center;
+            gap: 5px;
+            border: 1px solid #fee2e2;
+        }
+
+        .active-session-indicator.active {
+            display: flex;
+            animation: pulse-red 2s infinite;
+        }
+
+        @keyframes pulse-red {
+            0% {
+                box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(220, 38, 38, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
+            }
+        }
+
+        #patientSelect {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            font-size: 0.9rem;
+            min-width: 200px;
+        }
+
+        .system-status {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 0.85rem;
+            color: var(--color-muted);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--color-success);
+            box-shadow: 0 0 8px var(--color-success);
+        }
+
+        .main-tabs {
+            background: var(--color-card);
+            display: flex;
+            padding: 0 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+            gap: 20px;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .config-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .config-row input {
+            width: 60px;
+            padding: 4px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .tab-btn {
+            padding: 1rem 0.5rem;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-weight: 600;
+            color: var(--color-muted);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.95rem;
+        }
+
+        .tab-btn.active {
+            color: var(--color-primary);
+            border-bottom-color: var(--color-primary);
+        }
+
+        .tab-content {
+            display: none;
+            padding: 1.5rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .live-grid {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 1.5rem;
+        }
+
+        .video-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            aspect-ratio: 16/9;
+        }
+
+        #videoFeed {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .metrics-overlay {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(4px);
+            padding: 0.8rem;
+            border-radius: var(--radius);
+            width: 220px;
+            border-left: 4px solid var(--color-primary);
+            font-size: 0.85rem;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px dashed #e2e8f0;
+        }
+
+        .card {
+            background: var(--color-card);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            box-shadow: var(--shadow);
+            margin-bottom: 1rem;
+        }
+
+        .chart-container {
+            height: 280px;
+            margin-top: 1rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+        }
+
+        .btn-primary {
+            background: var(--color-primary);
+            color: white;
+        }
+
+        .btn-success {
+            background: var(--color-success);
+            color: white;
+        }
+
+        .btn-warning {
+            background: var(--color-warning);
+            color: white;
+        }
+
+        .btn-outline {
+            background: white;
+            border: 1px solid #cbd5e1;
+            color: var(--color-text);
+        }
+
+        #eventLog {
+            font-family: 'Consolas', monospace;
+            font-size: 0.75rem;
+            height: 100%;
+            max-height: 500px;
+            overflow-y: auto;
+            background: #f8fafc;
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1e293b;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            z-index: 1000;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 0.6rem;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header class="clinic-header">
+        <div class="logo">🦶 PodiaAI <span class="text-primary">Clinic</span> <span class="version">v5.0 Prof</span>
+        </div>
+        <div class="patient-selector">
+            <select id="patientSelect" onchange="loadActivePatient()">
+                <option value="">🔍 Seleccionar paciente...</option>
+            </select>
+            <button class="btn btn-primary" onclick="switchToTab('patient', null)">+ Nuevo</button>
+        </div>
+        <div class="system-status">
+            <div id="sessionIndicator" class="active-session-indicator">
+                <div class="status-dot"></div> SESIÓN ACTIVA
+            </div>
+            <span id="activePatientDisplay" style="font-weight: 600;">Huésped</span>
+            <span id="fpsDisplay">FPS: 0.0</span>
+            <div class="status-dot"></div>
+            <span>En línea</span>
+        </div>
+    </header>
+
+    <nav class="main-tabs">
+        <button class="tab-btn active" onclick="switchToTab('live', this)">📹 En Vivo</button>
+        <button class="tab-btn" onclick="switchToTab('patient', this)">👤 Pacientes</button>
+        <button class="tab-btn" onclick="switchToTab('settings', this)">⚙️ Configurar</button>
+    </nav>
+
+    <main id="tab-live" class="tab-content active">
+        <div class="live-grid">
+            <div class="vision-main">
+                <div class="video-wrapper">
+                    <img id="videoFeed" src="/video_feed?src=0" alt="Stream">
+                    <div class="metrics-overlay">
+                        <h4>📊 Cinemática Tiempo Real</h4>
+                        <div class="metric-row"><span>Tobillo D.</span><strong id="disp-rAnkle">--°</strong></div>
+                        <div class="metric-row"><span>Tobillo I.</span><strong id="disp-lAnkle">--°</strong></div>
+                        <div class="metric-row"><span>Simetría</span><strong id="disp-sym">--%</strong></div>
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:10px; margin-top:1rem; align-items:center; flex-wrap: wrap;">
+                    <button class="btn btn-success" id="btn-start" onclick="toggleSession()">▶ Iniciar Sesión</button>
+                    <button class="btn btn-outline" onclick="document.getElementById('videoFile').click()">📂 Cargar
+                        Video</button>
+                    <input type="file" id="videoFile" hidden onchange="handleFileUpload(event)">
+
+                    <div class="ia-labeling"
+                        style="display:flex; gap:5px; padding: 10px; background: #f1f5f9; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <span
+                            style="font-size: 0.75rem; font-weight: 700; align-self: center; margin-right: 5px;">ETIQUETAR:</span>
+                        <button onclick="labelSample('Normal')"
+                            style="padding:4px 10px; border-radius:4px; border:none; cursor:pointer; background:#22c55e; color: white; font-size:0.75rem;">Normal</button>
+                        <button onclick="labelSample('Pronador')"
+                            style="padding:4px 10px; border-radius:4px; border:none; cursor:pointer; background:#f59e0b; color: white; font-size:0.75rem;">Pronador</button>
+                        <button onclick="labelSample('Supinador')"
+                            style="padding:4px 10px; border-radius:4px; border:none; cursor:pointer; background:#3b82f6; color: white; font-size:0.75rem;">Supinador</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:1rem;">
+                    <h4>📈 Progresión Cinemática (Ángulos)</h4>
+                    <div class="chart-container">
+                        <canvas id="chartAngles"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="vision-side">
+                <div class="card" style="height: 100%;">
+                    <h4>📄 Auditoría Clínica</h4>
+                    <div id="eventLog">Iniciando motor de visión...</div>
+                    <div style="margin-top:2rem">
+                        <h5>Acciones Rápidas</h5>
+                        <button class="btn btn-outline" style="width:100%; margin-top:0.5rem"
+                            onclick="trainIA()">Re-Entrenar IA</button>
+                        <button class="btn btn-outline" style="width:100%; margin-top:0.5rem"
+                            onclick="exportCSV()">Exportar Session (.csv)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <main id="tab-patient" class="tab-content">
+        <div class="card">
+            <h3>👤 Registro de Nuevo Paciente</h3>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-top:1.5rem;">
+                <div><label>Nombre y Apellidos</label><input type="text" id="p_name" placeholder="Ej: Juan Perez"></div>
+                <div><label>Edad</label><input type="number" id="p_age" placeholder="30"></div>
+            </div>
+            <div style="margin-top:1rem;"><label>Notas / Antecedentes</label><textarea id="p_notes"
+                    style="height:120px;"></textarea></div>
+            <button class="btn btn-primary" style="margin-top:1.5rem; width:200px" onclick="submitPatient()">💾 Guardar
+                Paciente</button>
+        </div>
+    </main>
+
+    <main id="tab-settings" class="tab-content">
+        <div class="config-grid">
+            <div class="card">
+                <h3>⚙️ Parámetros Clínicos</h3>
+                <p style="font-size: 0.8rem; color: var(--color-muted); margin-bottom: 1rem;">Defina los rangos de
+                    normalidad biomecánica.</p>
+                <div id="settingsContainer">
+                </div>
+                <button class="btn btn-primary" style="margin-top: 1rem; width: 100%;" onclick="saveSettings()">💾
+                    Guardar Configuración</button>
+            </div>
+            <div class="card">
+                <h3>🤖 Motor de Inteligencia Artificial</h3>
+                <p style="font-size: 0.8rem; color: var(--color-muted); margin-bottom: 1rem;">Muestras recolectadas:
+                    <span id="sampleCount" style="font-weight: 700;">0</span></p>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <button class="btn btn-outline" onclick="trainIA()">⚡ Entrenar Modelo Clínico</button>
+                    <p style="font-size: 0.75rem;">El modelo se entrena localmente para detectar vicios de marcha
+                        específicos del paciente.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="toastContainer"></div>
+
+    <script>
+        // CONFIGURACIÓN GLOBAL DE AUTENTICACIÓN
+        const API_AUTH = 'Basic YWRtaW46Y2xpbmljMjAyNg=='; // admin:clinic2026 en Base64
+        const HEADERS_AUTH = { 'Authorization': API_AUTH };
+        const HEADERS_JSON = { 'Content-Type': 'application/json', 'Authorization': API_AUTH };
+
+        const appState = { sessionActive: false, currentPatientId: null, currentPatientName: "Huésped" };
+        let charts = { angles: null };
+
+        function switchToTab(id, el) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`tab-${id}`).classList.add('active');
+            if (el) el.classList.add('active');
+            if (id === 'settings') loadSettings();
+        }
+
+        function showToast(msg) {
+            const t = document.createElement('div'); t.className = 'toast'; t.innerText = msg;
+            document.body.appendChild(t); setTimeout(() => t.remove(), 3000);
+        }
+
+        async function updatePatientList() {
+            try {
+                const response = await fetch('/api/patients', { headers: HEADERS_AUTH });
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                const list = await response.json();
+                const sel = document.getElementById('patientSelect');
+                sel.innerHTML = '<option value="">🔍 Seleccionar paciente...</option>';
+                list.forEach(p => {
+                    sel.innerHTML += `<option value="${p.id}">${p.name} (ID: ${p.id.substring(0, 4)})</option>`;
+                });
+                if (appState.currentPatientId) sel.value = appState.currentPatientId;
+            } catch (e) {
+                console.error("Error cargando lista de pacientes:", e);
+            }
+        }
+
+        async function submitPatient() {
+            const data = {
+                name: document.getElementById('p_name').value,
+                age: document.getElementById('p_age').value,
+                notes: document.getElementById('p_notes').value
+            };
+
+            if (!data.name) return showToast("Nombre obligatorio");
+
+            try {
+                const r = await fetch('/api/patient', {
+                    method: 'POST',
+                    headers: HEADERS_JSON,
+                    body: JSON.stringify(data)
+                });
+                if (!r.ok) throw new Error(`El servidor rechazó la petición: Error ${r.status}`);
+                const res = await r.json();
+
+                if (res.status === 'ok') {
+                    showToast("¡Nuevo Paciente Registrado!");
+                    appState.currentPatientId = res.patient_id;
+                    appState.currentPatientName = data.name;
+                    document.getElementById('activePatientDisplay').innerText = data.name;
+
+                    // Actualizamos la lista con el nuevo paciente
+                    updatePatientList();
+
+                    // Limpiamos el formulario
+                    document.getElementById('p_name').value = '';
+                    document.getElementById('p_age').value = '';
+                    document.getElementById('p_notes').value = '';
+
+                    // Volvemos a la pestaña en vivo
+                    switchToTab('live', null);
+                }
+            } catch (e) {
+                console.error("Error al guardar el paciente:", e);
+                showToast("Error de conexión. Revisa la consola.");
+            }
+        }
+
+        async function loadActivePatient() {
+            const id = document.getElementById('patientSelect').value;
+            if (!id) {
+                appState.currentPatientId = null;
+                appState.currentPatientName = "Huésped";
+                document.getElementById('activePatientDisplay').innerText = "Huésped";
+                return;
+            }
+            try {
+                const r = await fetch(`/api/patient/active/${id}`, { method: 'PUT', headers: HEADERS_AUTH });
+                if (!r.ok) return;
+                const p = await r.json();
+                if (p.status === 'ok') {
+                    appState.currentPatientId = id;
+                    appState.currentPatientName = p.name;
+                    document.getElementById('activePatientDisplay').innerText = p.name;
+                    showToast(`Paciente activo: ${p.name}`);
+                }
+            } catch (e) { console.error("Error cargando paciente activo", e); }
+        }
+
+        async function toggleSession() {
+            try {
+                const r = await fetch('/api/session/toggle', { method: 'POST', headers: HEADERS_AUTH });
+                if (!r.ok) return;
+                const d = await r.json();
+                if (d.status === 'ok') {
+                    appState.sessionActive = d.active;
+                    const btn = document.getElementById('btn-start');
+                    const ind = document.getElementById('sessionIndicator');
+                    btn.innerText = d.active ? "⏸ Detener Captura" : "▶ Iniciar Sesión";
+                    btn.className = d.active ? "btn btn-warning" : "btn btn-success";
+                    ind.className = d.active ? "active-session-indicator active" : "active-session-indicator";
+                    showToast(d.active ? "Grabación de datos iniciada" : "Captura detenida");
+                }
+            } catch (e) { console.error("Error cambiando sesión", e); }
+        }
+
+        async function loadSettings() {
+            try {
+                const r = await fetch('/api/ranges', { headers: HEADERS_AUTH });
+                if (!r.ok) return;
+                const data = await r.json();
+                const container = document.getElementById('settingsContainer');
+                container.innerHTML = '';
+                for (const [key, val] of Object.entries(data)) {
+                    container.innerHTML += `
+                        <div class="config-row">
+                            <span style="text-transform: capitalize;">${key.replace(/_/g, ' ')}</span>
+                            <div>
+                                Min: <input type="number" id="min-${key}" value="${val.min}">
+                                Max: <input type="number" id="max-${key}" value="${val.max}">
+                            </div>
+                        </div>`;
+                }
+            } catch (e) { console.error("Error cargando rangos", e); }
+        }
+
+        async function saveSettings() {
+            try {
+                const r = await fetch('/api/ranges', { headers: HEADERS_AUTH });
+                if (!r.ok) return;
+                const data = await r.json();
+                const update = {};
+                for (const key of Object.keys(data)) {
+                    update[key] = {
+                        min: parseFloat(document.getElementById(`min-${key}`).value),
+                        max: parseFloat(document.getElementById(`max-${key}`).value)
+                    };
+                }
+                const res = await fetch('/api/ranges', {
+                    method: 'PUT',
+                    headers: HEADERS_JSON,
+                    body: JSON.stringify(update)
+                });
+                if (res.ok) showToast("Configuración Guardada");
+            } catch (e) { console.error("Error guardando settings", e); }
+        }
+
+        function handleFileUpload(event) {
+            const fd = new FormData();
+            fd.append('video', event.target.files[0]);
+            showToast("Subiendo video...");
+
+            fetch('/upload_video', { method: 'POST', headers: HEADERS_AUTH, body: fd })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.status === 'ok') {
+                        document.getElementById('videoFeed').src = `/video_feed?src=${encodeURIComponent(d.filepath)}&t=${Date.now()}`;
+                        showToast("Video cargado con éxito");
+                    } else {
+                        showToast("Error: " + d.msg);
+                    }
+                }).catch(e => { console.error("Upload error", e); showToast("Error en la subida"); });
+        }
+
+        async function labelSample(label) {
+            try {
+                const raw_response = await fetch('/api/label_sample', {
+                    method: 'POST',
+                    headers: HEADERS_JSON,
+                    body: JSON.stringify({ label: label })
+                });
+                if (!raw_response.ok) return;
+                const d = await raw_response.json();
+                if (d.status === 'ok') showToast(d.msg);
+                else showToast("⚠️ " + (d.error || d.msg));
+            } catch (e) { console.error("Error etiquetando", e); }
+        }
+
+        async function trainIA() {
+            showToast("⌛ Re-entrenando Motor Predictivo...");
+            try {
+                const r = await fetch('/api/train_model', { method: 'POST', headers: HEADERS_AUTH });
+                if (!r.ok) return;
+                const d = await r.json();
+                if (d.status === 'ok') {
+                    showToast(`✅ Proceso finalizado: ${d.samples} muestras procesadas.`);
+                } else {
+                    showToast("❌ Error: " + (d.error || d.msg));
+                }
+            } catch (e) { console.error("Error entrenando", e); showToast("Error al conectar con IA"); }
+        }
+
+        function exportCSV() {
+            if (!appState.currentPatientId) return showToast("⚠️ Debe seleccionar un paciente");
+            window.location.href = `/api/export_report/${appState.currentPatientId}`;
+        }
+
+        window.onload = () => {
+            // Inicializar la lista al cargar la página
+            updatePatientList();
+
+            // Configurar la gráfica
+            charts.angles = new Chart(document.getElementById('chartAngles'), {
+                type: 'line',
+                data: {
+                    labels: Array(50).fill(''),
+                    datasets: [
+                        { label: 'Tobillo Der', data: Array(50).fill(null), borderColor: '#1e40af', tension: 0.1, fill: false, pointRadius: 0 },
+                        { label: 'Tobillo Izq', data: Array(50).fill(null), borderColor: '#dc2626', tension: 0.1, fill: false, pointRadius: 0 }
+                    ]
+                },
+                options: { animation: false, responsive: true, maintainAspectRatio: false, scales: { y: { min: 140, max: 190 } } }
+            });
+
+            // Polling para actualizar los datos en tiempo real (cada 250ms)
+            setInterval(async () => {
+                try {
+                    const response = await fetch('/api/status', { headers: HEADERS_AUTH });
+                    if (!response.ok) return;
+                    const d = await response.json();
+
+                    document.getElementById('fpsDisplay').innerText = `FPS: ${d.fps}`;
+                    if (d.samples !== undefined) document.getElementById('sampleCount').innerText = d.samples;
+
+                    const btn = document.getElementById('btn-start');
+                    const ind = document.getElementById('sessionIndicator');
+                    if (d.session_active !== appState.sessionActive) {
+                        appState.sessionActive = d.session_active;
+                        btn.innerText = d.active ? "⏸ Detener Captura" : "▶ Iniciar Sesión";
+                        ind.className = d.active ? "active-session-indicator active" : "active-session-indicator";
+                    }
+
+                    if (d.angles && d.angles.r_ankle !== undefined) {
+                        document.getElementById('disp-rAnkle').innerText = d.angles.r_ankle.toFixed(1) + "°";
+                        document.getElementById('disp-lAnkle').innerText = d.angles.l_ankle.toFixed(1) + "°";
+                        document.getElementById('disp-sym').innerText = (d.angles.symmetry || 0).toFixed(1) + "%";
+
+                        charts.angles.data.datasets[0].data.shift();
+                        charts.angles.data.datasets[0].data.push(d.angles.r_ankle);
+                        charts.angles.data.datasets[1].data.shift();
+                        charts.angles.data.datasets[1].data.push(d.angles.l_ankle);
+                        charts.angles.update('none');
+                    }
+                } catch (e) {
+                    // Ignorar errores silenciosos del polling de red
+                }
+            }, 250);
+        };
+    </script>
+</body>
+
+</html>
